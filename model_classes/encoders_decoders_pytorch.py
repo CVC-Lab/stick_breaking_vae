@@ -1,3 +1,4 @@
+import torch
 from torch import nn
 from utils.util_vars import hidden_ndims, activation, latent_ndims
 
@@ -36,7 +37,7 @@ class StickBreakingEncoderMSI(object):
         self.msi_input_to_hidden = nn.Linear(input_ndims, 4)
         self.l1 = nn.Linear(5, 7)
         self.l2 = nn.Linear(7, 9)
-        self.hidden_to_beta = nn.Linear(9, latent_ndims)
+        self.msi_hidden_to_beta = nn.Linear(9, latent_ndims)
         self.alpha = torch.ones(1, latent_ndims) # alpha is fixed to 1
         self.msi_activation = activation
         self.msi_encoder_layers = nn.ModuleList([self.msi_input_to_hidden, 
@@ -54,9 +55,10 @@ class StickBreakingEncoderMSI(object):
         return parameters
 
 class StickBreakingEncoderHSI(object):
+    def __init__(self, input_ndims):
         self.hsi_input_to_hidden = nn.Linear(input_ndims, 10)
         self.l1 = nn.Linear(10, 10)
-        self.hidden_to_beta = nn.Linear(10, latent_ndims)
+        self.hsi_hidden_to_beta = nn.Linear(10, latent_ndims)
         self.alpha = torch.ones(1, latent_ndims) # alpha is fixed to 1
         self.hsi_activation = activation
         self.hsi_encoder_layers = nn.ModuleList([self.hsi_input_to_hidden, 

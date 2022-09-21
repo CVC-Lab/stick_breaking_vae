@@ -55,7 +55,7 @@ def unfreeze_network(params):
     for param in params:
         param.require_grad = True
 
-def train(epoch, stage_id):
+def train(epoch):
     print(f'\nTrain Epoch: {epoch}')
     model.train()
     reconstruction_loss = 0
