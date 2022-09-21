@@ -35,14 +35,16 @@ class VAE(object):
                 layer.weight = torch.nn.Parameter(torch.normal(*init_weight_mean_var, layer_size))
                 layer.bias = torch.nn.Parameter(torch.zeros(layer.out_features))
 
-    def ELBO_loss(self, recon_x, x, param1, param2, kl_divergence):
+    def ELBO_loss(self, recon_x, x, input_ndims, param1, param2, kl_divergence):
         n_samples = len(recon_x)
         x = x.view(-1, input_ndims)
         if not torch.isfinite(recon_x.log()).all():
             raise AssertionError('Reconstructed x.log not finite!: ', recon_x.log())
         reconstruction_loss = - (x * recon_x.log() + (1 - x)
                                  * (1 - recon_x).log()).sum(axis=1)  # per Nalisnick & Smyth github
-        regularization_loss = torch.stack([kl_divergence(param1[i], param2[i]) for i in range(n_samples)])
+        # regularization_loss = torch.stack([kl_divergence(param1[i], param2[i]) for i in range(len(param1.shape[1]))])
+        # regularization_loss = torch.stack([kl_divergence(param1[i], param2[i]) for i in range(n_samples)])
+        regularization_loss = reconstruct
         return reconstruction_loss.mean(),  regularization_loss.mean()
 
     def reparametrize(self, param1, param2, parametrization=None):

@@ -71,7 +71,7 @@ def train(epoch):
 
         recon_hsi_batch, param1_hsi, param2_hsi, Sh = model(data, stage=0)
         batch_hsi_reconstruction_loss, batch_hsi_regularization_loss = \
-            model.ELBO_loss(recon_hsi_batch, data, param1_hsi, param2_hsi, model.kl_divergence)
+            model.ELBO_loss(recon_hsi_batch, data[2], hsi_ndims, param1_hsi, param2_hsi, model.kl_divergence)
         reconstruction_loss += batch_hsi_reconstruction_loss
         regularization_loss += batch_hsi_regularization_loss
         loss = batch_hsi_reconstruction_loss + batch_hsi_regularization_loss
@@ -97,7 +97,7 @@ def train(epoch):
 
         recon_msi_batch, param1_msi, param2_msi, Sm = model(data, stage=1)
         batch_msi_reconstruction_loss, batch_msi_regularization_loss = \
-            model.ELBO_loss(recon_msi_batch, data, param1_msi, param2_msi, model.kl_divergence)
+            model.ELBO_loss(recon_msi_batch, data[1], msi_ndims, param1_msi, param2_msi, model.kl_divergence)
         reconstruction_loss += batch_msi_reconstruction_loss
         regularization_loss += batch_msi_regularization_loss
         loss = batch_msi_reconstruction_loss + batch_msi_regularization_loss
