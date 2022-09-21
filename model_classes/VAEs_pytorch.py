@@ -1,11 +1,19 @@
 import torch
 # import botorch
-from model_classes.encoders_decoders_pytorch import GaussianEncoder, StickBreakingEncoder, Decoder
+from model_classes.encoders_decoders_pytorch import (GaussianEncoder, StickBreakingEncoder, 
+                                Decoder, StickBreakingEncoderMSI, StickBreakingEncoderHSI)
 from utils.util_vars import init_weight_mean_var, latent_ndims, prior_mu, prior_sigma, prior_alpha, \
     prior_beta, uniform_low, uniform_high, glogit_prior_mu
 from utils.util_funcs import beta_func, logistic_func
 from numpy.testing import assert_almost_equal
 import pdb
+
+stages = {
+    0:"train_hyperspectral",
+    1:"train_multispectral",
+    2:"minimize_angular_distortion",
+    3: "eval"
+}
 
 class VAE(object):
     def __init__(self, target_distribution, latent_distribution, prior_params):
@@ -212,13 +220,15 @@ class StickBreakingVAE(torch.nn.Module, StickBreakingEncoder, Decoder, VAE):
 
         return kl.sum()
 
-class USDN(torch.nn.Module, StickBreakingEncoderMSI, StickBreakingEncoderHSI, Decoder):
-    def __init__(self, msi_dim, hsi_dim, out_dim, parametrization):
+
+class USDN(torch.nn.Module, StickBreakingEncoderMSI, StickBreakingEncoderHSI, Decoder, VAE):
+    def __init__(self, msi_ndims, hsi_ndims, out_dim, parametrization):
         super(USDN, self).__init__()
-        StickBreakingEncoderMSI.__init__(self, msi_dim)
-        StickBreakingEncoderHSI.__init__(self, hsi_dim)
+        StickBreakingEncoderMSI.__init__(self, msi_ndims)
+        StickBreakingEncoderHSI.__init__(self, hsi_ndims)
         Decoder.__init__(self, out_dim)
-        
+        self.msi_ndims = msi_ndims
+        self.hsi_ndims = hsi_ndims    
         
         self.parametrization = parametrization
         if parametrization == 'Kumaraswamy':
@@ -229,7 +239,7 @@ class USDN(torch.nn.Module, StickBreakingEncoderMSI, StickBreakingEncoderHSI, De
         elif parametrization == 'Gauss_Logit':
             VAE.__init__(self, target_distribution=torch.distributions.MultivariateNormal,
                          latent_distribution=torch.distributions.MultivariateNormal,
-                         prior_params[torch.ones(latent_ndims) * glogit_prior_mu,
+                         prior_params=[torch.ones(latent_ndims) * glogit_prior_mu,
                          torch.diag(torch.ones(latent_ndims) * prior_sigma ** 2)])
         elif parametrization == 'GEM':
             # Gamma distribution used to approximate beta distribution
@@ -238,39 +248,52 @@ class USDN(torch.nn.Module, StickBreakingEncoderMSI, StickBreakingEncoderHSI, De
                          prior_params=[torch.ones(latent_ndims) * prior_alpha,
                          torch.ones(latent_ndims) * prior_beta])
 
-        # self.init_weights(self.msi_encoder.modules())
-        # self.init_weights(self.hsi_encoder.modules())
+        self.init_weights(self.msi_encoder_layers)
+        self.init_weights(self.hsi_encoder_layers)
+        self.init_weights(self.decoder_layers)
 
-    def forward(self, msi_image, hsi_image):
-        pdb.set_trace()
-        param1, param2 = self.encode(msi_image.view(-1, input_ndims))
-        param3, param4 = self.encode(hsi_image.view(-1, input_ndims))
-        if self.training:
-            pi_m = self.reparametrize(param1, param2, parametrization=self.parametrization)
-            pi_h = self.reparametrize(param3, param4, parametrization=self.parametrization)
-        else:
-            # reconstruct random samples from the area of highest density
-            if self.parametrization == 'Kumaraswamy':
-                highest_density_msi = (1 - self.latent_distribution(param1, param2).mean.pow(1 / param2)).pow(1 / param1)
-                highest_density_hsi = (1 - self.latent_distribution(param3, param4).mean.pow(1 / param4)).pow(1 / param3)
-            elif self.parametrization == 'GEM':
-                highest_density = torch.lgamma(param1).exp().mul(param1).\
-                    mul(torch.distributions.Beta(param1, param2).mean).pow(1 / param1).div(param2)
-            elif self.parametrization == 'Gauss_Logit':
-                highest_density = param1
-
-            v_m = self.set_v_K_to_one(highest_density_msi)
-            pi_m = self.get_stick_segments(v_m)
-            v_h = self.set_v_K_to_one(highest_density_hsi)
-            pi_h = self.get_stick_segments(v_h)
-            # changes
-        reconstructed_msi = self.decode(pi_m)
-        reconstructed_hsi = self.decode(pi_h)
-
-        if self.parametrization == 'Gauss_Logit':
-            param2 = torch.stack([torch.diag(param2[i].pow(2)) for i in range(len(param2))])
-
-        return reconstructed_x, param1, param2, param3, param4
+    def forward(self, data, stage):
+        _, msi_image, hsi_image = data
+        # pdb.set_trace()
+        if stage == 0:
+            param1_hsi, param2_hsi = self.encode_hsi(hsi_image.view(-1, self.hsi_ndims))
+            if self.training:
+                pi_h = self.reparametrize(param1_hsi, param2_hsi, parametrization=self.parametrization)
+            else:
+                # reconstruct random samples from the area of highest density
+                if self.parametrization == 'Kumaraswamy':
+                    highest_density_hsi = (1 - self.latent_distribution(param1_hsi, param2_hsi).mean.pow(1 / param2_hsi)).pow(1 / param1_hsi)
+                elif self.parametrization == 'GEM':
+                    highest_density = torch.lgamma(param1_hsi).exp().mul(param1_hsi).\
+                        mul(torch.distributions.Beta(param1_hsi, param2_hsi).mean).pow(1 / param1_hsi).div(param2_hsi)
+                elif self.parametrization == 'Gauss_Logit':
+                    highest_density = param1_hsi
+                v_h = self.set_v_K_to_one(highest_density_hsi)
+                pi_h = self.get_stick_segments(v_h)
+            
+            if self.parametrization == 'Gauss_Logit':
+                param2_hsi = torch.stack([torch.diag(param2_hsi[i].pow(2)) for i in range(len(param2_hsi))])
+            reconstructed_hsi = self.decode(pi_h)
+            return reconstructed_hsi, param1_hsi, param2_hsi, pi_h
+        elif stage == 1:
+            param1_msi, param2_msi = self.encode_msi(msi_image.view(-1, self.msi_ndims))
+            if self.training:
+                pi_m = self.reparametrize(param1_msi, param2_msi, parametrization=self.parametrization)
+            else:
+                # reconstruct random samples from the area of highest density
+                if self.parametrization == 'Kumaraswamy':
+                    highest_density_hsi = (1 - self.latent_distribution(param1_msi, param2_msi).mean.pow(1 / param2_msi)).pow(1 / param1_msi)
+                elif self.parametrization == 'GEM':
+                    highest_density = torch.lgamma(param1_msi).exp().mul(param1_msi).\
+                        mul(torch.distributions.Beta(param1_msi, param2_msi).mean).pow(1 / param1_msi).div(param2_msi)
+                elif self.parametrization == 'Gauss_Logit':
+                    highest_density = param1_msi
+                v_m = self.set_v_K_to_one(highest_density_msi)
+                pi_m = self.get_stick_segments(v_m)
+                if self.parametrization == 'Gauss_Logit':
+                    param2_msi = torch.stack([torch.diag(param2_msi[i].pow(2)) for i in range(len(param2_msi))])
+            reconstructed_msi = self.decode(pi_m)
+            return reconstructed_msi, param1_msi, param2_msi, pi_m
 
     def kl_divergence(self, param1, param2):
         kl_switcher = dict(Kumaraswamy=self.kumaraswamy_kl_divergence,
