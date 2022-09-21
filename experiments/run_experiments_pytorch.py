@@ -3,15 +3,17 @@ import os
 import torch
 from torch import optim
 from torch.utils.tensorboard import SummaryWriter
-from utils.util_vars import CUDA, learning_rate, print_interval, train_loader, test_loader, n_train_epochs, input_shape,\
-    latent_ndims, parametrizations, lookahead, n_monte_carlo_samples, n_random_samples, model_path, checkpoint_path
-from model_classes.VAEs_pytorch import GaussianVAE, StickBreakingVAE
+from utils.util_vars import (CUDA, learning_rate, print_interval, n_train_epochs,
+    latent_ndims, parametrizations, lookahead, n_monte_carlo_samples, 
+    n_random_samples, model_path, checkpoint_path, msi_ndims, hsi_ndims, output_ndims)
+from model_classes.VAEs_pytorch import GaussianVAE, StickBreakingVAE, USDN
 
 # init model and optimizer
 time_now = datetime.datetime.now().__format__('%b_%d_%Y_%H_%M')
 parametrization = parametrizations['Kumar']
-model = GaussianVAE().cuda() if CUDA else GaussianVAE()
+# model = GaussianVAE().cuda() if CUDA else GaussianVAE()
 # model = StickBreakingVAE(parametrization).cuda() if CUDA else StickBreakingVAE(parametrization)
+model = USDN(msi_ndims, hsi_ndims, output_ndims, parametrization)
 optimizer = optim.Adam(model.parameters(), betas=(0.95, 0.999), lr=learning_rate, eps=1e-4)
 parametrization_str = parametrization if model._get_name() == "StickBreakingVAE" else ''
 model_name = '_'.join(filter(None, [model._get_name(), parametrization_str]))
@@ -47,7 +49,7 @@ def train(epoch):
         mc_sample_idx = torch.randint(high=len(data), size=(n_monte_carlo_samples,))
         mc_sample = data[mc_sample_idx]
         optimizer.zero_grad()
-        recon_batch, param1, param2 = model(mc_sample)
+        recon_batch, param1, param2, param3, param4 = model(mc_sample)
         batch_reconstruction_loss, batch_regularization_loss = \
             model.ELBO_loss(recon_batch, mc_sample, param1, param2, model.kl_divergence)
         reconstruction_loss += batch_reconstruction_loss

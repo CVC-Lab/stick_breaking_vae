@@ -4,11 +4,12 @@ import torchvision
 import numpy as np
 from torch import nn
 from torchvision import transforms
+import pdb
 
 # arg defaults in https://github.com/enalisnick/stick-breaking_dgms/blob/master/run_gauss_VAE_experiments.py
 seed = 1234
 torch.set_rng_state(torch.manual_seed(seed).get_state())
-batch_size = 100
+batch_size = 2
 latent_ndims = 50
 hidden_ndims = 500
 learning_rate = 1e-4
@@ -39,20 +40,34 @@ if CUDA:
     dataloader_kwargs.update({'num_workers': 1, 'pin_memory': True})
 
 # get datasets
-train_dataset = torchvision.datasets.MNIST('.', train=True, transform=transforms.ToTensor(), download=download_needed)
-test_dataset = torchvision.datasets.MNIST('.', train=False, transform=transforms.ToTensor())
+import sys
+sys.path.append("../../../")
+from hmi_fusion.datasets.cave_dataset import CAVEDataset
+train_dataset = CAVEDataset("/data/shubham/HSI-MSI-Image-Fusion/hmi_fusion/datasets/data/CAVE", mode="train")
+test_dataset = CAVEDataset("/data/shubham/HSI-MSI-Image-Fusion/hmi_fusion/datasets/data/CAVE", mode="test")
+# from ....hmi_fusion.datasets.harvard_dataset import HarvardDataset
 
+msi_shape, hsi_shape = train_dataset[0][1].shape, train_dataset[0][2].shape
+msi_ndims, hsi_ndims = np.product(msi_shape), np.product(hsi_shape)
+output_ndims = np.product(hsi_ndims)
+# pdb.set_trace()
+# msi_dims, hsi_dims = train_dataset[0]
 # get dimension info
-input_shape = list(train_dataset.data[0].shape)
-input_ndims = np.product(input_shape)
+# input_shape = list(train_dataset.data[0][0].shape)
+# input_ndims = np.product(input_shape)
 
-# define data loaders
-train_data = train_dataset.data.reshape(-1, 1, *input_shape) / 255  # reshaping and scaling bytes to [0,1]
-test_data = test_dataset.data.reshape(-1, 1, *input_shape) / 255
-pruned_train_data = train_data[:train_valid_test_splits[0]]
-train_loader = torch.utils.data.DataLoader(pruned_train_data,
+# # define data loaders
+# train_data = train_dataset.data.reshape(-1, 1, *input_shape) / 255  # reshaping and scaling bytes to [0,1]
+# test_data = test_dataset.data.reshape(-1, 1, *input_shape) / 255
+# pruned_train_data = train_data[:train_valid_test_splits[0]]
+# train_loader = torch.utils.data.DataLoader(pruned_train_data,
+#                                            shuffle=True, batch_size=batch_size, **dataloader_kwargs)
+# test_loader = torch.utils.data.DataLoader(test_data,
+#                                           shuffle=False, batch_size=batch_size, **dataloader_kwargs)
+
+train_loader = torch.utils.data.DataLoader(train_dataset,
                                            shuffle=True, batch_size=batch_size, **dataloader_kwargs)
-test_loader = torch.utils.data.DataLoader(test_data,
+test_loader = torch.utils.data.DataLoader(test_dataset,
                                           shuffle=False, batch_size=batch_size, **dataloader_kwargs)
 
 parametrizations = dict(Kumar='Kumaraswamy', GLogit='Gauss_Logit', GEM='GEM')
