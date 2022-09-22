@@ -6,7 +6,7 @@ from torch.utils.tensorboard import SummaryWriter
 from utils.util_vars import (CUDA, learning_rate, print_interval, n_train_epochs,
     latent_ndims, parametrizations, lookahead, n_monte_carlo_samples, 
     n_random_samples, model_path, 
-    checkpoint_path, msi_ndims, hsi_ndims, output_ndims, train_loader, test_loader)
+    checkpoint_path, hr_msi_ndims,lr_hsi_ndims, hr_hsi_ndims, train_loader, test_loader)
 from model_classes.VAEs_pytorch import GaussianVAE, StickBreakingVAE, USDN
 from torchmetrics import SpectralAngleMapper
 import pdb
@@ -16,7 +16,7 @@ parametrization = parametrizations['Kumar']
 # model = GaussianVAE().cuda() if CUDA else GaussianVAE()
 # model = StickBreakingVAE(parametrization).cuda() if CUDA else StickBreakingVAE(parametrization)
 sam = SpectralAngleMapper()
-model = USDN(msi_ndims, hsi_ndims, output_ndims, parametrization)
+model = USDN(hr_msi_ndims, lr_hsi_ndims, hr_hsi_ndims, parametrization)
 optimizer = optim.Adam(model.parameters(), betas=(0.95, 0.999), lr=learning_rate, eps=1e-4)
 parametrization_str = parametrization if model._get_name() == "StickBreakingVAE" else ''
 model_name = '_'.join(filter(None, [model._get_name(), parametrization_str]))
@@ -71,7 +71,7 @@ def train(epoch):
 
         recon_hsi_batch, param1_hsi, param2_hsi, Sh = model(data, stage=0)
         batch_hsi_reconstruction_loss, batch_hsi_regularization_loss = \
-            model.ELBO_loss(recon_hsi_batch, data[2], hsi_ndims, param1_hsi, param2_hsi, model.kl_divergence)
+            model.ELBO_loss(recon_hsi_batch, data[2], hr_hsi_ndims, param1_hsi, param2_hsi, model.kl_divergence)
         reconstruction_loss += batch_hsi_reconstruction_loss
         regularization_loss += batch_hsi_regularization_loss
         loss = batch_hsi_reconstruction_loss + batch_hsi_regularization_loss
@@ -97,7 +97,7 @@ def train(epoch):
 
         recon_msi_batch, param1_msi, param2_msi, Sm = model(data, stage=1)
         batch_msi_reconstruction_loss, batch_msi_regularization_loss = \
-            model.ELBO_loss(recon_msi_batch, data[1], msi_ndims, param1_msi, param2_msi, model.kl_divergence)
+            model.ELBO_loss(recon_msi_batch, data[2], hr_hsi_ndims, param1_msi, param2_msi, model.kl_divergence)
         reconstruction_loss += batch_msi_reconstruction_loss
         regularization_loss += batch_msi_regularization_loss
         loss = batch_msi_reconstruction_loss + batch_msi_regularization_loss

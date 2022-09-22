@@ -1,9 +1,11 @@
 import torch
+from torch.nn import KLDivLoss
 # import botorch
 from model_classes.encoders_decoders_pytorch import (GaussianEncoder, StickBreakingEncoder, 
                                 Decoder, StickBreakingEncoderMSI, StickBreakingEncoderHSI)
-from utils.util_vars import init_weight_mean_var, latent_ndims, prior_mu, prior_sigma, prior_alpha, \
-    prior_beta, uniform_low, uniform_high, glogit_prior_mu
+from utils.util_vars import (init_weight_mean_var, latent_ndims, prior_mu, 
+                            prior_sigma, prior_alpha, prior_beta, uniform_low, 
+                            uniform_high, glogit_prior_mu)
 from utils.util_funcs import beta_func, logistic_func
 from numpy.testing import assert_almost_equal
 import pdb
@@ -44,7 +46,7 @@ class VAE(object):
                                  * (1 - recon_x).log()).sum(axis=1)  # per Nalisnick & Smyth github
         # regularization_loss = torch.stack([kl_divergence(param1[i], param2[i]) for i in range(len(param1.shape[1]))])
         # regularization_loss = torch.stack([kl_divergence(param1[i], param2[i]) for i in range(n_samples)])
-        regularization_loss = reconstruct
+        regularization_loss = kl_divergence(param1, param2)
         return reconstruction_loss.mean(),  regularization_loss.mean()
 
     def reparametrize(self, param1, param2, parametrization=None):
@@ -224,13 +226,13 @@ class StickBreakingVAE(torch.nn.Module, StickBreakingEncoder, Decoder, VAE):
 
 
 class USDN(torch.nn.Module, StickBreakingEncoderMSI, StickBreakingEncoderHSI, Decoder, VAE):
-    def __init__(self, msi_ndims, hsi_ndims, out_dim, parametrization):
+    def __init__(self, hr_msi_ndims, lr_hsi_ndims, out_dim, parametrization):
         super(USDN, self).__init__()
-        StickBreakingEncoderMSI.__init__(self, msi_ndims)
-        StickBreakingEncoderHSI.__init__(self, hsi_ndims)
+        StickBreakingEncoderMSI.__init__(self, hr_msi_ndims)
+        StickBreakingEncoderHSI.__init__(self, lr_hsi_ndims)
         Decoder.__init__(self, out_dim)
-        self.msi_ndims = msi_ndims
-        self.hsi_ndims = hsi_ndims    
+        self.hr_msi_ndims = hr_msi_ndims
+        self.lr_hsi_ndims = lr_hsi_ndims    
         
         self.parametrization = parametrization
         if parametrization == 'Kumaraswamy':
@@ -255,10 +257,10 @@ class USDN(torch.nn.Module, StickBreakingEncoderMSI, StickBreakingEncoderHSI, De
         self.init_weights(self.decoder_layers)
 
     def forward(self, data, stage):
-        _, msi_image, hsi_image = data
+        Yh, Ym, X = data
         # pdb.set_trace()
         if stage == 0:
-            param1_hsi, param2_hsi = self.encode_hsi(hsi_image.view(-1, self.hsi_ndims))
+            param1_hsi, param2_hsi = self.encode_hsi(Yh.view(-1, self.lr_hsi_ndims))
             if self.training:
                 pi_h = self.reparametrize(param1_hsi, param2_hsi, parametrization=self.parametrization)
             else:
@@ -278,7 +280,7 @@ class USDN(torch.nn.Module, StickBreakingEncoderMSI, StickBreakingEncoderHSI, De
             reconstructed_hsi = self.decode(pi_h)
             return reconstructed_hsi, param1_hsi, param2_hsi, pi_h
         elif stage == 1:
-            param1_msi, param2_msi = self.encode_msi(msi_image.view(-1, self.msi_ndims))
+            param1_msi, param2_msi = self.encode_msi(Ym.view(-1, self.hr_msi_ndims))
             if self.training:
                 pi_m = self.reparametrize(param1_msi, param2_msi, parametrization=self.parametrization)
             else:

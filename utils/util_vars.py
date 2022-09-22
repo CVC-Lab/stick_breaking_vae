@@ -47,9 +47,9 @@ train_dataset = CAVEDataset("/data/shubham/HSI-MSI-Image-Fusion/hmi_fusion/datas
 test_dataset = CAVEDataset("/data/shubham/HSI-MSI-Image-Fusion/hmi_fusion/datasets/data/CAVE", mode="test")
 # from ....hmi_fusion.datasets.harvard_dataset import HarvardDataset
 
-msi_shape, hsi_shape = train_dataset[0][1].shape, train_dataset[0][2].shape
-msi_ndims, hsi_ndims = np.product(msi_shape), np.product(hsi_shape)
-output_ndims = np.product(hsi_ndims)
+lr_hsi_shape, hr_msi_shape, hr_hsi_shape = train_dataset[0][0].shape, train_dataset[0][1].shape, train_dataset[0][2].shape # Yh, Ym, X
+lr_hsi_ndims, hr_msi_ndims = np.product(lr_hsi_shape), np.product(hr_msi_shape)
+hr_hsi_ndims = np.product(hr_hsi_shape)
 # pdb.set_trace()
 # msi_dims, hsi_dims = train_dataset[0]
 # get dimension info
