@@ -9,8 +9,10 @@ from utils.util_vars import (CUDA, learning_rate, print_interval, n_train_epochs
     checkpoint_path, hr_msi_ndims,lr_hsi_ndims, hr_hsi_ndims, hr_hsi_shape, train_loader, test_loader)
 from utils.util_funcs import image_grid, plot_to_image
 from model_classes.VAEs_pytorch import GaussianVAE, StickBreakingVAE, USDN
-from torchmetrics import SpectralAngleMapper
+import wandb
 import pdb
+
+wandb.init(project="sharp_vae", sync_tensorboard=True)
 # init model and optimizer
 time_now = datetime.datetime.now().__format__('%b_%d_%Y_%H_%M')
 parametrization = parametrizations['Kumar']
@@ -18,6 +20,7 @@ parametrization = parametrizations['Kumar']
 # model = StickBreakingVAE(parametrization).cuda() if CUDA else StickBreakingVAE(parametrization)
 sam = SpectralAngleMapper()
 model = USDN(hr_msi_ndims, lr_hsi_ndims, hr_hsi_ndims, parametrization)
+wandb.watch(model)
 optimizer = optim.Adam(model.parameters(), betas=(0.95, 0.999), lr=learning_rate, eps=1e-4)
 parametrization_str = parametrization if model._get_name() == "StickBreakingVAE" else ''
 model_name = '_'.join(filter(None, [model._get_name(), parametrization_str]))
@@ -120,7 +123,7 @@ def train(epoch):
         # hsi network is froze, only msi encoder is updated
         optimizer.zero_grad()
         if epoch % 10 == 0 and epoch > 0:
-            spectral_distortion_loss = sam(Sm, Sh)
+            spectral_distortion_loss = model.sam_loss(Sm, Sh)
             spectral_distortion_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
             optimizer.step()

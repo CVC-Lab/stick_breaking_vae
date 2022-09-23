@@ -334,3 +334,12 @@ class USDN(torch.nn.Module, StickBreakingEncoderMSI, StickBreakingEncoderHSI, De
               * (prior_beta - 1) * beta  # 10th-order Taylor approximation
 
         return kl.sum()
+
+    def sam_loss(self, Sm, Sh):
+        eps = 0.00000001
+        nom_pred = torch.sum(Sm**2, 0)
+        nom_true = torch.sum(Sh**2, 0)
+        nom_base = torch.sqrt(nom_pred*nom_true)
+        nom_top = torch.sum(Sm*Sh, 0)
+        angle = torch.sum(torch.acos(nom_top/(nom_base + eps)))
+        return angle/3.1416
