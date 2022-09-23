@@ -259,8 +259,8 @@ class USDN(torch.nn.Module, StickBreakingEncoderMSI, StickBreakingEncoderHSI, De
     def forward(self, data, stage):
         Yh, Ym, X = data
         # pdb.set_trace()
-        if stage == 0:
-            param1_hsi, param2_hsi = self.encode_hsi(Yh.view(-1, self.lr_hsi_ndims))
+        if stage == 0 or stage  == 3:
+            param1_hsi, param2_hsi = self.encode_hsi(Yh.reshape(-1, self.lr_hsi_ndims))
             if self.training:
                 pi_h = self.reparametrize(param1_hsi, param2_hsi, parametrization=self.parametrization)
             else:
@@ -280,7 +280,7 @@ class USDN(torch.nn.Module, StickBreakingEncoderMSI, StickBreakingEncoderHSI, De
             reconstructed_hsi = self.decode(pi_h)
             return reconstructed_hsi, param1_hsi, param2_hsi, pi_h
         elif stage == 1:
-            param1_msi, param2_msi = self.encode_msi(Ym.view(-1, self.hr_msi_ndims))
+            param1_msi, param2_msi = self.encode_msi(Ym.reshape(-1, self.hr_msi_ndims))
             if self.training:
                 pi_m = self.reparametrize(param1_msi, param2_msi, parametrization=self.parametrization)
             else:

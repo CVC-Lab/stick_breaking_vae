@@ -6,7 +6,8 @@ from torch.utils.tensorboard import SummaryWriter
 from utils.util_vars import (CUDA, learning_rate, print_interval, n_train_epochs,
     latent_ndims, parametrizations, lookahead, n_monte_carlo_samples, 
     n_random_samples, model_path, 
-    checkpoint_path, hr_msi_ndims,lr_hsi_ndims, hr_hsi_ndims, train_loader, test_loader)
+    checkpoint_path, hr_msi_ndims,lr_hsi_ndims, hr_hsi_ndims, hr_hsi_shape, train_loader, test_loader)
+from utils.util_funcs import image_grid, plot_to_image
 from model_classes.VAEs_pytorch import GaussianVAE, StickBreakingVAE, USDN
 from torchmetrics import SpectralAngleMapper
 import pdb
@@ -145,19 +146,19 @@ def train(epoch):
 def test(epoch):
     global best_test_epoch, best_test_loss, stop_training
     model.eval()
+    model.training = False
     reconstruction_loss = 0
     regularization_loss = 0
 
     for batch_idx, data in enumerate(test_loader):
         data = data.cuda() if CUDA else data
-        mc_sample_idx = torch.randint(high=len(data), size=(n_monte_carlo_samples,))  # draw random monte carlo sample
-        mc_sample = data[mc_sample_idx]
-        recon_batch, param1, param2 = model(mc_sample)
-        batch_reconstruction_loss, batch_regularization_loss = \
-            model.ELBO_loss(recon_batch, mc_sample, param1, param2, model.kl_divergence)
-
-        reconstruction_loss += batch_reconstruction_loss
-        regularization_loss += batch_regularization_loss
+        
+        recon_hsi_batch, param1_hsi, param2_hsi, Sh = model(data, stage=3)
+        batch_hsi_reconstruction_loss, batch_hsi_regularization_loss = \
+            model.ELBO_loss(recon_hsi_batch, data[2], hr_hsi_ndims, param1_hsi, param2_hsi, model.kl_divergence)
+        reconstruction_loss += batch_hsi_reconstruction_loss
+        regularization_loss += batch_hsi_regularization_loss
+        loss = batch_hsi_reconstruction_loss + batch_hsi_regularization_loss
 
     test_loss = reconstruction_loss + regularization_loss
 
@@ -191,35 +192,45 @@ for epoch in range(start_epoch, n_train_epochs + 1):
         print('Stick segments do not sum to one/reconstructed_x.log() is not finite. Stopping training.')
         break
 
-    if epoch == best_test_epoch:
-
+    if epoch == best_test_epoch and epoch % 5 == 0:
+        
         sample = torch.randn(n_random_samples, latent_ndims)  # TODO: normalize random sample to latent space bounds
         sample = sample.cuda() if CUDA else sample
         sample = model.decode(sample).cpu()
-
+        
         # save latent space samples
-        tb_writer.add_images(f'{n_random_samples}_random_latent_space_samples_{time_now}',
-                             img_tensor=sample.view(n_random_samples, 1, *input_shape),
-                             global_step=epoch,
-                             dataformats='NCHW')
+        img_tensor = sample.view(n_random_samples, *hr_hsi_shape)
+        for sid in range(n_random_samples):
+            figure = image_grid(img_tensor[sid, ...], sid)
+            tb_writer.add_image(f'{sid}_random_latent_space_samples_{time_now}',
+            img_tensor=plot_to_image(figure)[..., :3],
+            global_step=epoch,
+            dataformats='HWC')
 
-        random_idxs = torch.randint(0, int(test_loader.dataset.shape[0]), size=(n_random_samples,))
-        samples = test_loader.dataset[random_idxs]
-
-        # save originals
-        tb_writer.add_images(f'{n_random_samples}_original_test_samples_{time_now}',
-                             img_tensor=samples.view(n_random_samples, 1, *input_shape),
-                             global_step=epoch,
-                             dataformats='NCHW')
+        # save originals  
+        random_idxs = torch.randint(0, len(test_loader.dataset), size=(n_random_samples,))
+        samples = [test_loader.dataset[idx] for idx in random_idxs]
+        img_tensor = sample.view(n_random_samples, *hr_hsi_shape)
+        for sid in range(n_random_samples):
+            figure = image_grid(img_tensor[sid, ...], sid)
+            tb_writer.add_image(f'{sid}_original_test_samples_{time_now}',
+            img_tensor=plot_to_image(figure)[..., :3],
+            global_step=epoch,
+            dataformats='HWC')
 
         samples = samples.cuda() if CUDA else samples
-        samples = torch.stack([model(x)[0] for x in samples])
 
+        samples = torch.stack([model((x[0][None, ...], x[1][None, ...], 
+                                        x[2][None, ...]), stage=3)[0] for x in samples])
         # save reconstructed
-        tb_writer.add_images(f'{n_random_samples}_reconstructed_test_samples_{time_now}',
-                             img_tensor=samples.view(n_random_samples, 1, *input_shape),
-                             global_step=epoch,
-                             dataformats='NCHW')
+        img_tensor = sample.view(n_random_samples, *hr_hsi_shape)
+        
+        for sid in range(n_random_samples):
+            figure = image_grid(img_tensor[sid, ...], sid)
+            tb_writer.add_image(f'{sid}_reconstructed_test_samples_{time_now}',
+            img_tensor=plot_to_image(figure)[..., :3],
+            global_step=epoch,
+            dataformats='HWC')
 
         # save trained weights
         best_test_model = model.state_dict().copy()
