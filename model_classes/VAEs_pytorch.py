@@ -226,14 +226,14 @@ class StickBreakingVAE(torch.nn.Module, StickBreakingEncoder, Decoder, VAE):
 
 
 class USDN(torch.nn.Module, StickBreakingEncoderMSI, StickBreakingEncoderHSI, Decoder, VAE):
-    def __init__(self, hr_msi_ndims, lr_hsi_ndims, out_dim, parametrization):
+    def __init__(self, hr_msi_ndims, lr_hsi_ndims, out_dim, R, parametrization):
         super(USDN, self).__init__()
         StickBreakingEncoderMSI.__init__(self, hr_msi_ndims)
         StickBreakingEncoderHSI.__init__(self, lr_hsi_ndims)
         Decoder.__init__(self, out_dim)
         self.hr_msi_ndims = hr_msi_ndims
         self.lr_hsi_ndims = lr_hsi_ndims    
-        
+
         self.parametrization = parametrization
         if parametrization == 'Kumaraswamy':
             VAE.__init__(self, target_distribution=torch.distributions.beta.Beta,
@@ -255,6 +255,8 @@ class USDN(torch.nn.Module, StickBreakingEncoderMSI, StickBreakingEncoderHSI, De
         self.init_weights(self.msi_encoder_layers)
         self.init_weights(self.hsi_encoder_layers)
         self.init_weights(self.decoder_layers)
+        # init decoder R intialize
+        # pdb.set_trace()
 
     def forward(self, data, stage):
         Yh, Ym, X = data
@@ -286,7 +288,7 @@ class USDN(torch.nn.Module, StickBreakingEncoderMSI, StickBreakingEncoderHSI, De
             else:
                 # reconstruct random samples from the area of highest density
                 if self.parametrization == 'Kumaraswamy':
-                    highest_density_hsi = (1 - self.latent_distribution(param1_msi, param2_msi).mean.pow(1 / param2_msi)).pow(1 / param1_msi)
+                    highest_density_msi = (1 - self.latent_distribution(param1_msi, param2_msi).mean.pow(1 / param2_msi)).pow(1 / param1_msi)
                 elif self.parametrization == 'GEM':
                     highest_density = torch.lgamma(param1_msi).exp().mul(param1_msi).\
                         mul(torch.distributions.Beta(param1_msi, param2_msi).mean).pow(1 / param1_msi).div(param2_msi)
@@ -298,6 +300,31 @@ class USDN(torch.nn.Module, StickBreakingEncoderMSI, StickBreakingEncoderHSI, De
                     param2_msi = torch.stack([torch.diag(param2_msi[i].pow(2)) for i in range(len(param2_msi))])
             reconstructed_msi = self.decode(pi_m)
             return reconstructed_msi, param1_msi, param2_msi, pi_m
+        elif stage == 2:
+            param1_hsi, param2_hsi = self.encode_hsi(Yh.reshape(-1, self.lr_hsi_ndims))
+            param1_msi, param2_msi = self.encode_msi(Ym.reshape(-1, self.hr_msi_ndims))
+            if self.training:
+                pi_h = self.reparametrize(param1_hsi, param2_hsi, parametrization=self.parametrization)
+                pi_m = self.reparametrize(param1_msi, param2_msi, parametrization=self.parametrization)
+            else:
+                # reconstruct random samples from the area of highest density
+                if self.parametrization == 'Kumaraswamy':
+                    highest_density_hsi = (1 - self.latent_distribution(param1_hsi, param2_hsi).mean.pow(1 / param2_hsi)).pow(1 / param1_hsi)
+                    highest_density_msi = (1 - self.latent_distribution(param1_msi, param2_msi).mean.pow(1 / param2_msi)).pow(1 / param1_msi)
+                elif self.parametrization == 'GEM':
+                    highest_density_hsi = torch.lgamma(param1_hsi).exp().mul(param1_hsi).\
+                        mul(torch.distributions.Beta(param1_hsi, param2_hsi).mean).pow(1 / param1_hsi).div(param2_hsi)
+                    highest_density_msi = torch.lgamma(param1_msi).exp().mul(param1_msi).\
+                        mul(torch.distributions.Beta(param1_msi, param2_msi).mean).pow(1 / param1_msi).div(param2_msi)
+                elif self.parametrization == 'Gauss_Logit':
+                    highest_density_hsi = param1_hsi
+                    highest_density_msi = param1_msi
+                v_h = self.set_v_K_to_one(highest_density_hsi)
+                pi_h = self.get_stick_segments(v_h)
+                v_m = self.set_v_K_to_one(highest_density_msi)
+                pi_m = self.get_stick_segments(v_m)
+            
+            return pi_m, pi_h
 
     def kl_divergence(self, param1, param2):
         kl_switcher = dict(Kumaraswamy=self.kumaraswamy_kl_divergence,
@@ -341,5 +368,7 @@ class USDN(torch.nn.Module, StickBreakingEncoderMSI, StickBreakingEncoderHSI, De
         nom_true = torch.sum(Sh**2, 0)
         nom_base = torch.sqrt(nom_pred*nom_true)
         nom_top = torch.sum(Sm*Sh, 0)
-        angle = torch.sum(torch.acos(nom_top/(nom_base + eps)))
+        div_term = torch.acos(nom_top/nom_base)
+        div_term[div_term.isnan()] = 0.0
+        angle = torch.sum(div_term)
         return angle/3.1416

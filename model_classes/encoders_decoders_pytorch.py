@@ -76,12 +76,20 @@ class StickBreakingEncoderHSI(object):
 class Decoder(object):
     def __init__(self, hr_hsi_ndims):
         self.latent_to_hidden = nn.Linear(latent_ndims, 10)
+        self.l1 = nn.Linear(10, 10)
         self.hidden_to_reconstruction = nn.Linear(10, hr_hsi_ndims)
+        self.dropout = nn.Dropout(p=0.2)
         self.activation = activation
-        self.decoder_layers = nn.ModuleList([self.latent_to_hidden, self.hidden_to_reconstruction])
+        self.R = nn.Linear(3, 31)
+        self.decoder_layers = nn.ModuleList([self.latent_to_hidden, self.l1, self.hidden_to_reconstruction, self.R])
         self.sigmoid = nn.Sigmoid()  # note: used as decoder output activation in the Nalisnick github
 
     def decode(self, z):
         hidden = self.activation(self.latent_to_hidden(z))
+        hidden = self.l1(hidden)
+        hidden = self.dropout(hidden)
         reconstruction = self.sigmoid(self.hidden_to_reconstruction(hidden))
         return reconstruction
+
+    def gen_hrmsi(self, recon):
+        return self.R(recon.reshape(recon.shape[0], 31, -1).permute(0, 2, 1)).permute(0, 2, 1)

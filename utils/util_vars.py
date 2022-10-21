@@ -42,11 +42,10 @@ if CUDA:
 # get datasets
 import sys
 sys.path.append("../../../")
-from hmi_fusion.datasets.cave_dataset import CAVEDataset
-train_dataset = CAVEDataset("/data/shubham/HSI-MSI-Image-Fusion/hmi_fusion/datasets/data/CAVE", mode="train")
-test_dataset = CAVEDataset("/data/shubham/HSI-MSI-Image-Fusion/hmi_fusion/datasets/data/CAVE", mode="test")
+from hmi_fusion.datasets.cave_dataset import CAVEDataset, R
+train_dataset = CAVEDataset("/data/shubham/HSI-MSI-Image-Fusion/hmi_fusion/datasets/data/CAVE", cl="balloons_ms", mode="train")
+test_dataset = CAVEDataset("/data/shubham/HSI-MSI-Image-Fusion/hmi_fusion/datasets/data/CAVE", cl="balloons_ms", mode="test")
 # from ....hmi_fusion.datasets.harvard_dataset import HarvardDataset
-
 lr_hsi_shape, hr_msi_shape, hr_hsi_shape = train_dataset[0][0].shape, train_dataset[0][1].shape, train_dataset[0][2].shape # Yh, Ym, X
 lr_hsi_ndims, hr_msi_ndims = np.product(lr_hsi_shape), np.product(hr_msi_shape)
 hr_hsi_ndims = np.product(hr_hsi_shape)

@@ -6,22 +6,22 @@ from torch.utils.tensorboard import SummaryWriter
 from utils.util_vars import (CUDA, learning_rate, print_interval, n_train_epochs,
     latent_ndims, parametrizations, lookahead, n_monte_carlo_samples, 
     n_random_samples, model_path, 
-    checkpoint_path, hr_msi_ndims,lr_hsi_ndims, hr_hsi_ndims, hr_hsi_shape, train_loader, test_loader)
+    checkpoint_path, hr_msi_ndims,lr_hsi_ndims, hr_hsi_ndims, 
+    hr_hsi_shape, train_loader, test_loader, R)
 from utils.util_funcs import image_grid, plot_to_image
 from model_classes.VAEs_pytorch import GaussianVAE, StickBreakingVAE, USDN
-import wandb
+# import wandb
 import pdb
 
-wandb.init(project="sharp_vae", sync_tensorboard=True)
+# wandb.init(project="sharp_vae", sync_tensorboard=True)
 # init model and optimizer
 time_now = datetime.datetime.now().__format__('%b_%d_%Y_%H_%M')
 parametrization = parametrizations['Kumar']
 # model = GaussianVAE().cuda() if CUDA else GaussianVAE()
 # model = StickBreakingVAE(parametrization).cuda() if CUDA else StickBreakingVAE(parametrization)
-sam = SpectralAngleMapper()
-model = USDN(hr_msi_ndims, lr_hsi_ndims, hr_hsi_ndims, parametrization)
-wandb.watch(model)
-optimizer = optim.Adam(model.parameters(), betas=(0.95, 0.999), lr=learning_rate, eps=1e-4)
+model = USDN(hr_msi_ndims, lr_hsi_ndims, hr_hsi_ndims, R, parametrization)
+# wandb.watch(model)
+optimizer = optim.Adam(model.parameters(), betas=(0.95, 0.999), lr=learning_rate, eps=1e-4, weight_decay=1e-3)
 parametrization_str = parametrization if model._get_name() == "StickBreakingVAE" else ''
 model_name = '_'.join(filter(None, [model._get_name(), parametrization_str]))
 start_epoch = 1
@@ -72,8 +72,9 @@ def train(epoch):
         # STAGE 1
         # freeze msi encoder, train HSI network
         freeze_network(model.msi_encoder_layers)
-
-        recon_hsi_batch, param1_hsi, param2_hsi, Sh = model(data, stage=0)
+        # if epoch % 6 ==0 and epoch > 0:
+        #     pdb.set_trace()
+        recon_hsi_batch, param1_hsi, param2_hsi, _ = model(data, stage=0)
         batch_hsi_reconstruction_loss, batch_hsi_regularization_loss = \
             model.ELBO_loss(recon_hsi_batch, data[2], hr_hsi_ndims, param1_hsi, param2_hsi, model.kl_divergence)
         reconstruction_loss += batch_hsi_reconstruction_loss
@@ -85,6 +86,7 @@ def train(epoch):
         for name, param in model.named_parameters():
             isfinite = torch.isfinite(param).all()
             if not isfinite:
+                print(f"Nan in stage: {1}")
                 print(name, isfinite)
                 torch.save({'epoch': best_test_epoch,
                             'model_state_dict': best_test_model,
@@ -99,7 +101,7 @@ def train(epoch):
         unfreeze_network(model.msi_encoder_layers)
         freeze_network(model.hsi_encoder_layers)
 
-        recon_msi_batch, param1_msi, param2_msi, Sm = model(data, stage=1)
+        recon_msi_batch, param1_msi, param2_msi, _ = model(data, stage=1)
         batch_msi_reconstruction_loss, batch_msi_regularization_loss = \
             model.ELBO_loss(recon_msi_batch, data[2], hr_hsi_ndims, param1_msi, param2_msi, model.kl_divergence)
         reconstruction_loss += batch_msi_reconstruction_loss
@@ -109,8 +111,10 @@ def train(epoch):
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1)  # to prevent exploding gradient
         # check for NaN values in all .grad attributes
         for name, param in model.named_parameters():
+            
             isfinite = torch.isfinite(param).all()
             if not isfinite:
+                print(f"Nan in stage: {2}")
                 print(name, isfinite)
                 torch.save({'epoch': best_test_epoch,
                             'model_state_dict': best_test_model,
@@ -122,11 +126,24 @@ def train(epoch):
         # STEP 3
         # hsi network is froze, only msi encoder is updated
         optimizer.zero_grad()
-        if epoch % 10 == 0 and epoch > 0:
+        if epoch % 40 == 0 and epoch > 0:
+            # again call model data and get Sm and Sh and then minimize loss
+            Sm, Sh = model(data, stage=2)
             spectral_distortion_loss = model.sam_loss(Sm, Sh)
             spectral_distortion_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
+            for name, param in model.named_parameters():
+                isfinite = torch.isfinite(param).all()
+                if not isfinite:
+                    print(f"Nan in stage: {3}")
+                    print(name, isfinite)
+                    torch.save({'epoch': best_test_epoch,
+                                'model_state_dict': best_test_model,
+                                'optimizer_state_dict': best_test_optimizer},
+                            os.path.join(model_path, model_name, f'finite_loss_checkpoint_{model_name}_{time_now}'))
+                    break
             optimizer.step()
+            # pdb.set_trace()
         unfreeze_network(model.hsi_encoder_layers)
 
         if batch_idx % print_interval == 0:
@@ -187,6 +204,7 @@ for epoch in range(start_epoch, n_train_epochs + 1):
     try:
         train(epoch)
         test(epoch)
+        model.eval()
     except AssertionError:
         torch.save({'epoch': epoch,
                     'model_state_dict': model.state_dict(),
