@@ -59,7 +59,7 @@ class StickBreakingEncoderHSI(object):
         self.hsi_input_to_hidden = nn.Linear(input_ndims, 10)
         self.hsi_l1 = nn.Linear(10, 10)
         self.hsi_hidden_to_beta = nn.Linear(10, latent_ndims)
-        self.alpha = torch.ones(1, latent_ndims) # alpha is fixed to 1
+        self.alpha = torch.ones(1, latent_ndims).cuda() # alpha is fixed to 1
         self.hsi_activation = activation
         self.hsi_encoder_layers = nn.ModuleList([self.hsi_input_to_hidden, 
                                                 self.hsi_l1,

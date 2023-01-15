@@ -75,8 +75,9 @@ class VAE(object):
 
     def get_kumaraswamy_samples(self, param1, param2):
         # u is analogous to epsilon noise term in the Gaussian VAE
-        u = self.uniform_distribution.sample([1]).squeeze()
-        v = (1 - u.pow(1 / param2)).pow(1 / param1)
+        # pdb.set_trace()
+        u = self.uniform_distribution.sample([1]).squeeze().cuda()
+        v = (1 - u.pow(1 / param2.cuda())).pow(1 / param1.cuda())
         return v  # sampled fractions
 
     def get_GEM_samples(self, param1, param2):
@@ -113,7 +114,7 @@ class VAE(object):
         # ensure stick segments sum to 1
         assert_almost_equal(torch.ones(n_samples), pi.sum(axis=1).detach().numpy(),
                             decimal=2, err_msg='stick segments do not sum to 1')
-        return pi
+        return pi.cuda()
 
 
 class GaussianVAE(torch.nn.Module, GaussianEncoder, Decoder, VAE):
@@ -268,6 +269,7 @@ class USDN(torch.nn.Module, StickBreakingEncoderMSI, StickBreakingEncoderHSI, De
             else:
                 # reconstruct random samples from the area of highest density
                 if self.parametrization == 'Kumaraswamy':
+                    # pdb.set_trace()
                     highest_density_hsi = (1 - self.latent_distribution(param1_hsi, param2_hsi).mean.pow(1 / param2_hsi)).pow(1 / param1_hsi)
                 elif self.parametrization == 'GEM':
                     highest_density = torch.lgamma(param1_hsi).exp().mul(param1_hsi).\
@@ -279,6 +281,7 @@ class USDN(torch.nn.Module, StickBreakingEncoderMSI, StickBreakingEncoderHSI, De
             
             if self.parametrization == 'Gauss_Logit':
                 param2_hsi = torch.stack([torch.diag(param2_hsi[i].pow(2)) for i in range(len(param2_hsi))])
+            # pdb.set_trace()
             reconstructed_hsi = self.decode(pi_h)
             return reconstructed_hsi, param1_hsi, param2_hsi, pi_h
         elif stage == 1:
@@ -327,6 +330,8 @@ class USDN(torch.nn.Module, StickBreakingEncoderMSI, StickBreakingEncoderHSI, De
             return pi_m, pi_h
 
     def kl_divergence(self, param1, param2):
+        param1 = param1.cuda()
+        param2 = param2.cuda()
         kl_switcher = dict(Kumaraswamy=self.kumaraswamy_kl_divergence,
                            GEM=self.gamma_kl_divergence,
                            Gauss_Logit=self.gauss_logit_kl_divergence)
@@ -353,12 +358,14 @@ class USDN(torch.nn.Module, StickBreakingEncoderMSI, StickBreakingEncoderHSI, De
         return (kl1 + kl2).sum()
 
     def kumaraswamy_kl_divergence(self, alpha, beta):
+        # pdb.set_trace()
+        
         psi_b_taylor_approx = beta.log() - 1. / beta.mul(2) - 1. / beta.pow(2).mul(12)
-        kl = ((alpha - prior_alpha) / alpha) * (-0.57721 - psi_b_taylor_approx - 1 / beta)
-        kl += alpha.mul(beta).log() + beta_func(prior_alpha, prior_beta).log()  # normalization constants
+        kl = ((alpha - prior_alpha.cuda()) / alpha) * (-0.57721 - psi_b_taylor_approx - 1 / beta)
+        kl += alpha.mul(beta).log() + beta_func(prior_alpha.cuda(), prior_beta.cuda()).log()  # normalization constants
         kl += - (beta - 1) / beta
         kl += torch.stack([1. / (i + alpha * beta) * beta_func(i / alpha, beta) for i in range(1, 11)]).sum(axis=0) \
-              * (prior_beta - 1) * beta  # 10th-order Taylor approximation
+              * (prior_beta.cuda() - 1) * beta  # 10th-order Taylor approximation
 
         return kl.sum()
 

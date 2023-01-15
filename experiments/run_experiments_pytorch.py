@@ -20,6 +20,8 @@ parametrization = parametrizations['Kumar']
 # model = GaussianVAE().cuda() if CUDA else GaussianVAE()
 # model = StickBreakingVAE(parametrization).cuda() if CUDA else StickBreakingVAE(parametrization)
 model = USDN(hr_msi_ndims, lr_hsi_ndims, hr_hsi_ndims, R, parametrization)
+if CUDA:
+    model = model.cuda()
 # wandb.watch(model)
 optimizer = optim.Adam(model.parameters(), betas=(0.95, 0.999), lr=learning_rate, eps=1e-4, weight_decay=1e-3)
 parametrization_str = parametrization if model._get_name() == "StickBreakingVAE" else ''
@@ -61,13 +63,18 @@ def unfreeze_network(params):
 
 def train(epoch):
     print(f'\nTrain Epoch: {epoch}')
+
     model.train()
     reconstruction_loss = 0
     regularization_loss = 0
 
     for batch_idx, data in enumerate(train_loader):
-        
-        data = data.cuda() if CUDA else data
+        # pdb.set_trace()
+        # data = data.cuda() if CUDA else data
+        if CUDA:
+            for i in range(3):
+                data[i] = data[i].cuda()
+        data = data[:3]
         optimizer.zero_grad()
         # STAGE 1
         # freeze msi encoder, train HSI network
@@ -171,7 +178,11 @@ def test(epoch):
     regularization_loss = 0
 
     for batch_idx, data in enumerate(test_loader):
-        data = data.cuda() if CUDA else data
+        # data = data.cuda() if CUDA else data
+        if CUDA:
+            for i in range(3):
+                data[i] = data[i].cuda()
+        data = data[:3]
         
         recon_hsi_batch, param1_hsi, param2_hsi, Sh = model(data, stage=3)
         batch_hsi_reconstruction_loss, batch_hsi_regularization_loss = \
