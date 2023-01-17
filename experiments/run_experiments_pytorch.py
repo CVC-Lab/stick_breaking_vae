@@ -10,8 +10,20 @@ from utils.util_vars import (CUDA, learning_rate, print_interval, n_train_epochs
     hr_hsi_shape, train_loader, test_loader, R)
 from utils.util_funcs import image_grid, plot_to_image
 from model_classes.VAEs_pytorch import GaussianVAE, StickBreakingVAE, USDN
+from torchmetrics import SpectralAngleMapper
+from tqdm import tqdm
 # import wandb
 import pdb
+sam = SpectralAngleMapper()
+import sys
+sys.path.insert(0, "../..")
+from models.metrics import (
+    compare_mpsnr,
+    compare_mssim,
+    find_rmse,
+    # compare_sam,
+    compare_ergas
+)
 
 # wandb.init(project="sharp_vae", sync_tensorboard=True)
 # init model and optimizer
@@ -19,6 +31,8 @@ time_now = datetime.datetime.now().__format__('%b_%d_%Y_%H_%M')
 parametrization = parametrizations['Kumar']
 # model = GaussianVAE().cuda() if CUDA else GaussianVAE()
 # model = StickBreakingVAE(parametrization).cuda() if CUDA else StickBreakingVAE(parametrization)
+
+
 model = USDN(hr_msi_ndims, lr_hsi_ndims, hr_hsi_ndims, R, parametrization)
 if CUDA:
     model = model.cuda()
@@ -67,6 +81,7 @@ def train(epoch):
     model.train()
     reconstruction_loss = 0
     regularization_loss = 0
+    total_ergas_loss = 0
 
     for batch_idx, data in enumerate(train_loader):
         # pdb.set_trace()
@@ -79,15 +94,15 @@ def train(epoch):
         # STAGE 1
         # freeze msi encoder, train HSI network
         freeze_network(model.msi_encoder_layers)
-        # if epoch % 6 ==0 and epoch > 0:
-        #     pdb.set_trace()
         recon_hsi_batch, param1_hsi, param2_hsi, _ = model(data, stage=0)
-        batch_hsi_reconstruction_loss, batch_hsi_regularization_loss = \
+        batch_hsi_reconstruction_loss, batch_hsi_regularization_loss, ergas_loss = \
             model.ELBO_loss(recon_hsi_batch, data[2], hr_hsi_ndims, param1_hsi, param2_hsi, model.kl_divergence)
         reconstruction_loss += batch_hsi_reconstruction_loss
         regularization_loss += batch_hsi_regularization_loss
-        loss = batch_hsi_reconstruction_loss + batch_hsi_regularization_loss
+        total_ergas_loss += ergas_loss.item()
+        loss = batch_hsi_reconstruction_loss + batch_hsi_regularization_loss #+ ergas_loss
         loss.backward()
+        print("gradients updated")
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1)  # to prevent exploding gradient
         # check for NaN values in all .grad attributes
         for name, param in model.named_parameters():
@@ -107,13 +122,14 @@ def train(epoch):
         optimizer.zero_grad()
         unfreeze_network(model.msi_encoder_layers)
         freeze_network(model.hsi_encoder_layers)
-
+        freeze_network(model.decoder_layers)
         recon_msi_batch, param1_msi, param2_msi, _ = model(data, stage=1)
-        batch_msi_reconstruction_loss, batch_msi_regularization_loss = \
+        batch_msi_reconstruction_loss, batch_msi_regularization_loss, ergas_loss  = \
             model.ELBO_loss(recon_msi_batch, data[2], hr_hsi_ndims, param1_msi, param2_msi, model.kl_divergence)
         reconstruction_loss += batch_msi_reconstruction_loss
         regularization_loss += batch_msi_regularization_loss
-        loss = batch_msi_reconstruction_loss + batch_msi_regularization_loss
+        total_ergas_loss += ergas_loss.item()
+        loss = batch_msi_reconstruction_loss + batch_msi_regularization_loss #+ ergas_loss
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1)  # to prevent exploding gradient
         # check for NaN values in all .grad attributes
@@ -132,8 +148,8 @@ def train(epoch):
 
         # STEP 3
         # hsi network is froze, only msi encoder is updated
-        optimizer.zero_grad()
-        if epoch % 40 == 0 and epoch > 0:
+        if epoch % 10 == 0 and epoch > 0:
+            optimizer.zero_grad()
             # again call model data and get Sm and Sh and then minimize loss
             Sm, Sh = model(data, stage=2)
             spectral_distortion_loss = model.sam_loss(Sm, Sh)
@@ -152,6 +168,7 @@ def train(epoch):
             optimizer.step()
             # pdb.set_trace()
         unfreeze_network(model.hsi_encoder_layers)
+        unfreeze_network(model.decoder_layers)
 
         if batch_idx % print_interval == 0:
             print(f'[{batch_idx * len(data)}/{len(train_loader.dataset)} '
@@ -162,13 +179,48 @@ def train(epoch):
 
     reconstruction_loss /= len(train_loader.dataset)
     regularization_loss /= len(train_loader.dataset)
+    total_ergas_loss /= len(train_loader.dataset)
     train_loss /= len(train_loader.dataset)
-    print('====> Epoch: {} Average loss: {:.4f}'.format(epoch, train_loss))
+    print('====> Epoch: {} Average loss: {:.4f}, ergas: {:.4f}'.format(epoch, train_loss, total_ergas_loss))
 
     tb_writer.add_scalar(f"{time_now}/Loss/train", train_loss.item(), epoch)
     tb_writer.add_scalar(f"{time_now}/Regularization_Loss/train", regularization_loss.item(), epoch)
     tb_writer.add_scalar(f"{time_now}/Reconstruction_Loss/train", reconstruction_loss.item(), epoch)
+    tb_writer.add_scalar(f"{time_now}/Ergas/train", total_ergas_loss, epoch)
 
+
+def test_metrics(epoch):
+    model.eval()
+    total_psnr, total_ssim, total_rmse, total_sam, total_ergas =0,0,0,0,0
+    with torch.no_grad():
+        for data in tqdm(test_loader):
+            if CUDA:
+                for i in range(3):
+                    data[i] = data[i].cuda()
+            data = data[:3]
+            x = data[-1]
+            
+            x2, param1_hsi, param2_hsi, Sh = model(data, stage=3)
+            x2 = x2.reshape(x.shape).squeeze().detach().cpu().numpy()
+            x = x.squeeze().detach().cpu().numpy()
+            total_ssim += compare_mssim(x, x2)
+            rmse,  mse, rmse_per_band = find_rmse(x, x2)
+            total_rmse += rmse
+            total_psnr += compare_mpsnr(x, x2, mse)
+            total_sam += torch.nan_to_num(sam(torch.from_numpy(x).permute(2, 0, 1)[None, ...], 
+                                    torch.from_numpy(x2).permute(2, 0, 1)[None, ...]), nan=0, posinf=1.0) * (180/torch.pi)
+            total_ergas += compare_ergas(x, x2, 8, rmse_per_band)
+
+    opt = f"""## epoch: {epoch} Metric scores:
+    psnr:{total_psnr/len(test_loader)},
+    ssim:{total_ssim/len(test_loader)},
+    rmse:{total_rmse/len(test_loader)},
+    sam:{total_sam/len(test_loader)},
+    ergas:{total_ergas/len(test_loader)},
+    """
+    print(opt)
+
+            
 
 def test(epoch):
     global best_test_epoch, best_test_loss, stop_training
@@ -176,6 +228,7 @@ def test(epoch):
     model.training = False
     reconstruction_loss = 0
     regularization_loss = 0
+    total_ergas_loss = 0
 
     for batch_idx, data in enumerate(test_loader):
         # data = data.cuda() if CUDA else data
@@ -185,16 +238,18 @@ def test(epoch):
         data = data[:3]
         
         recon_hsi_batch, param1_hsi, param2_hsi, Sh = model(data, stage=3)
-        batch_hsi_reconstruction_loss, batch_hsi_regularization_loss = \
+        batch_hsi_reconstruction_loss, batch_hsi_regularization_loss, ergas_loss = \
             model.ELBO_loss(recon_hsi_batch, data[2], hr_hsi_ndims, param1_hsi, param2_hsi, model.kl_divergence)
-        reconstruction_loss += batch_hsi_reconstruction_loss
-        regularization_loss += batch_hsi_regularization_loss
+        reconstruction_loss += batch_hsi_reconstruction_loss.item()
+        regularization_loss += batch_hsi_regularization_loss.item()
+        total_ergas_loss += ergas_loss.item()
         loss = batch_hsi_reconstruction_loss + batch_hsi_regularization_loss
 
-    test_loss = reconstruction_loss + regularization_loss
+    test_loss = reconstruction_loss + regularization_loss #+ total_ergas_loss
 
     reconstruction_loss /= len(test_loader.dataset)
     regularization_loss /= len(test_loader.dataset)
+    total_ergas_loss /= len(test_loader.dataset)
     test_loss /= len(test_loader.dataset)
     print('====> Test set loss: {:.4f}'.format(test_loss))
 
@@ -212,17 +267,21 @@ def test(epoch):
 
 
 for epoch in range(start_epoch, n_train_epochs + 1):
-    try:
-        train(epoch)
-        test(epoch)
-        model.eval()
-    except AssertionError:
-        torch.save({'epoch': epoch,
-                    'model_state_dict': model.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict()},
-                   os.path.join(model_path, model_name, f'failed_checkpoint_{model_name}_{time_now}'))
-        print('Stick segments do not sum to one/reconstructed_x.log() is not finite. Stopping training.')
-        break
+    train(epoch)
+    # test_metrics(epoch)
+    # model.eval()
+    # try:
+    #     train(epoch)
+    #     # test(epoch)
+    #     test_metrics(epoch)
+    #     model.eval()
+    # except AssertionError:
+    #     torch.save({'epoch': epoch,
+    #                 'model_state_dict': model.state_dict(),
+    #                 'optimizer_state_dict': optimizer.state_dict()},
+    #                os.path.join(model_path, model_name, f'failed_checkpoint_{model_name}_{time_now}'))
+    #     print('Stick segments do not sum to one/reconstructed_x.log() is not finite. Stopping training.')
+    #     break
 
     if epoch == best_test_epoch and epoch % 5 == 0:
         

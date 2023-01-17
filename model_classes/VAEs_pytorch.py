@@ -9,7 +9,12 @@ from utils.util_vars import (init_weight_mean_var, latent_ndims, prior_mu,
 from utils.util_funcs import beta_func, logistic_func
 from numpy.testing import assert_almost_equal
 import pdb
-
+from torchmetrics import SpectralAngleMapper
+from torchmetrics import ErrorRelativeGlobalDimensionlessSynthesis as ERGAS
+from tqdm import tqdm
+sam = SpectralAngleMapper()
+ergas = ERGAS(ratio=1/8)
+mse = torch.nn.MSELoss()
 stages = {
     0:"train_hyperspectral",
     1:"train_multispectral",
@@ -39,15 +44,19 @@ class VAE(object):
 
     def ELBO_loss(self, recon_x, x, input_ndims, param1, param2, kl_divergence):
         n_samples = len(recon_x)
+        ergas_loss = ergas(recon_x.reshape(x.shape), x)**2
         x = x.view(-1, input_ndims)
         if not torch.isfinite(recon_x.log()).all():
-            raise AssertionError('Reconstructed x.log not finite!: ', recon_x.log())
-        reconstruction_loss = - (x * recon_x.log() + (1 - x)
-                                 * (1 - recon_x).log()).sum(axis=1)  # per Nalisnick & Smyth github
+            print(recon_x.log())
+            raise ValueError('Reconstructed x.log not finite!: ', recon_x.log())
+        # pdb.set_trace()
+        reconstruction_loss = mse(recon_x, x)
+        # reconstruction_loss = - (x * recon_x.log() + (1 - x)
+        #                          * (1 - recon_x).log()).sum(axis=1)  # per Nalisnick & Smyth github
         # regularization_loss = torch.stack([kl_divergence(param1[i], param2[i]) for i in range(len(param1.shape[1]))])
         # regularization_loss = torch.stack([kl_divergence(param1[i], param2[i]) for i in range(n_samples)])
         regularization_loss = kl_divergence(param1, param2)
-        return reconstruction_loss.mean(),  regularization_loss.mean()
+        return reconstruction_loss.mean(),  regularization_loss.mean(), ergas_loss.mean()
 
     def reparametrize(self, param1, param2, parametrization=None):
         if parametrization == 'Gaussian':
@@ -101,6 +110,9 @@ class VAE(object):
         return v1
 
     def get_stick_segments(self, v):
+        if torch.isnan(v).any():
+            print("got nan values for input")
+        # print(v)
         n_samples = v.size()[0]
         n_dims = v.size()[1]
         pi = torch.zeros((n_samples, n_dims))
@@ -112,8 +124,11 @@ class VAE(object):
                 pi[:, k] = v[:, k] * torch.stack([(1 - v[:, j]) for j in range(n_dims) if j < k]).prod(axis=0)
 
         # ensure stick segments sum to 1
-        assert_almost_equal(torch.ones(n_samples), pi.sum(axis=1).detach().numpy(),
+        # print(pi.sum(axis=1).detach().numpy())
+        assert_almost_equal(torch.ones(n_samples).float(), pi.sum(axis=1).detach().numpy(),
                             decimal=2, err_msg='stick segments do not sum to 1')
+
+        print("constraint satisfied")
         return pi.cuda()
 
 
@@ -178,12 +193,10 @@ class StickBreakingVAE(torch.nn.Module, StickBreakingEncoder, Decoder, VAE):
                     mul(torch.distributions.Beta(param1, param2).mean).pow(1 / param1).div(param2)
             elif self.parametrization == 'Gauss_Logit':
                 highest_density = param1
-
             v = self.set_v_K_to_one(highest_density)
             pi = self.get_stick_segments(v)
 
         reconstructed_x = self.decode(pi)
-
         if self.parametrization == 'Gauss_Logit':
             param2 = torch.stack([torch.diag(param2[i].pow(2)) for i in range(len(param2))])
 

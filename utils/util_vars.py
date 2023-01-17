@@ -66,6 +66,7 @@ hr_hsi_ndims = np.product(hr_hsi_shape)
 
 train_loader = torch.utils.data.DataLoader(train_dataset,
                                            shuffle=True, batch_size=batch_size, **dataloader_kwargs)
+print("len train dataset:", len(train_loader))
 test_loader = torch.utils.data.DataLoader(test_dataset,
                                           shuffle=False, batch_size=batch_size, **dataloader_kwargs)
 
