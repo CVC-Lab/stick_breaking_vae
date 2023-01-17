@@ -80,6 +80,11 @@ class StickBreakingEncoderMSI(object):
         uniform = self.msi_hidden_to_uniform(stack_layer_14)
         return uniform
 
+    def encode_msi(self, x):
+        beta = self.encode_beta_msi(x)
+        uniform = self.encode_uniform_msi(x)
+        return beta, uniform
+
 class StickBreakingEncoderHSI(object):
     def __init__(self, input_ndims, R):
         ly = 3
@@ -130,21 +135,25 @@ class StickBreakingEncoderHSI(object):
         uniform = self.hsi_hidden_to_uniform(stack_layer_14)
         return uniform
 
+    def encode_hsi(self, x):
+        beta = self.encode_beta_hsi(x)
+        uniform = self.encode_uniform_hsi(x)
+        return beta, uniform
+
 class Decoder(object):
     def __init__(self, hr_hsi_ndims):
-        self.latent_to_hidden = nn.Linear(latent_ndims, 10)
-        self.l1 = nn.Linear(10, 10)
-        self.hidden_to_reconstruction = nn.Linear(10, hr_hsi_ndims)
-        self.dropout = nn.Dropout(p=0.2)
-        self.activation = activation
+        self.num = 12
+        self.dimhr = hr_hsi_ndims
+        self.latent_to_hidden = nn.Linear(self.num, self.num, bias=False)
+        torch.nn.init.trunc_normal_(self.latent_to_hidden.weight, std=0.1)
+        self.hidden_to_reconstruction = nn.Linear(self.num, hr_hsi_ndims, bias=False)
+        torch.nn.init.trunc_normal_(self.hidden_to_reconstruction.weight, std=0.1)
+        self.decoder_layers = nn.ModuleList([self.latent_to_hidden, self.hidden_to_reconstruction])
         self.R = nn.Linear(3, 31)
-        self.decoder_layers = nn.ModuleList([self.latent_to_hidden, self.l1, self.hidden_to_reconstruction, self.R])
         self.sigmoid = nn.Sigmoid()  # note: used as decoder output activation in the Nalisnick github
 
     def decode(self, z):
-        hidden = self.activation(self.latent_to_hidden(z))
-        hidden = self.l1(hidden)
-        hidden = self.dropout(hidden)
+        hidden = self.latent_to_hidden(z)
         reconstruction = self.sigmoid(self.hidden_to_reconstruction(hidden))
         return reconstruction
 
